@@ -4,7 +4,7 @@
 Summary: Ethernet settings python bindings
 Name: python-ethtool
 Version: 0.6
-Release: 3%{?dist}
+Release: 5%{?dist}
 URL: http://fedorapeople.org/gitweb?p=dsommers/public_git/python-ethtool.git;a=summary
 Source: http://dsommers.fedorapeople.org/python-ethtool/%{name}-%{version}.tar.bz2
 Patch0: python-ethtool-0.3-doc.patch
@@ -29,6 +29,12 @@ Patch6: python-ethtool-a45819ecb5580aeeb09c6c2201929257f5d311d2-fix-pifconfig-co
 # with multiple IPv4 addresses (rhbz#759150):
 Patch7: python-ethtool-0.6-add-get_ipv4_addresses-method.patch
 
+# Makes get_active_devices() return IPv6-only interfaces, too
+Patch8: python-ethtool-0.6-return-ipv6-only-interface-names.patch
+
+# Makes pifconfig output all IPv4 addresses for interfaces
+Patch9: python-ethtool-0.6-make-pifconfig-output-all-ipv4-addresses-for-interface.patch
+
 License: GPLv2
 Group: System Environment/Libraries
 BuildRequires: python-devel libnl-devel asciidoc
@@ -51,6 +57,8 @@ PCI locations.
 %patch5 -p1 
 %patch6 -p1 
 %patch7 -p1 -b .759150
+%patch8 -p1
+%patch9 -p1
 
 %build
 %{__python} setup.py build
@@ -82,6 +90,16 @@ rm -rf %{buildroot}
 %endif
 
 %changelog
+* Thu Aug 08 2013 Bohuslav Kabrda <bkabrda@redhat.com> - 0.6-5
+- Fix regression introduced in fix for rhbz#876211.
+Resolves: rhbz#876211
+
+* Wed Aug 07 2013 Bohuslav Kabrda <bkabrda@redhat.com> - 0.6-4
+- make get_active_devices() return IPv6-only devices, too
+Resolves: rhbz#855920
+- make pifconfig output all IPv4 addresses for all devices
+Resolves: rhbz#876211
+
 * Thu Dec 13 2012 David Malcolm <dmalcolm@redhat.com> - 0.6-3
 - update python-ethtool-0.6-add-get_ipv4_addresses-method.patch, addressing
 bug 886644, memory leaks, and a crasher when the broadcast address is NULL
