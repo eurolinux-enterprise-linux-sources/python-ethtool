@@ -4,12 +4,30 @@
 Summary: Ethernet settings python bindings
 Name: python-ethtool
 Version: 0.6
-Release: 1%{?dist}
+Release: 3%{?dist}
 URL: http://fedorapeople.org/gitweb?p=dsommers/public_git/python-ethtool.git;a=summary
 Source: http://dsommers.fedorapeople.org/python-ethtool/%{name}-%{version}.tar.bz2
 Patch0: python-ethtool-0.3-doc.patch
 Patch1: python-ethtool-aa2c20e697af1907b92129410aa10952a3ffdd68-fix-RETURN_NONE-refcount.patch
 Patch2: python-ethtool-4e928d62a8e3c1dfefe6a55b81c0f0b4510b14eb-fix-error-handling.patch
+
+# Cherrypick upstream fix for typo in the "pethtool --help" message
+# (rhbz#692028):
+Patch3: python-ethtool-710766dc72260149bd78fd6168fbaf6838fc3d4f-fix-typo-in-pethtool-help.patch
+
+# Cherrypick upstream fix for memory leaks (rhbz#698125):
+Patch4: python-ethtool-abc7f912f66d41dd734a10900429d4cad9377da5-fix-memory-leaks.patch
+
+# Add IPv6 information to pifconfig (rhbz#698192):
+Patch5: python-ethtool-0.6-add-ipv6-info-to-pifconfig.patch
+
+# Cherrypick upstream fix for pifconfig's command-line parsing, to respect
+# interface arguments (rhbz#714753)
+Patch6: python-ethtool-a45819ecb5580aeeb09c6c2201929257f5d311d2-fix-pifconfig-command-line-parsing.patch
+
+# Add a get_ipv4_addresses() method to ethtool.etherinfo to support devices
+# with multiple IPv4 addresses (rhbz#759150):
+Patch7: python-ethtool-0.6-add-get_ipv4_addresses-method.patch
 
 License: GPLv2
 Group: System Environment/Libraries
@@ -27,6 +45,12 @@ PCI locations.
 %patch0 -p1 -b .doc
 %patch1 -p1 -b .fix-RETURN_NONE-refcount
 %patch2 -p1 -b .fix-error-handling
+
+%patch3 -p1 
+%patch4 -p1 -b .fix-memory-leaks
+%patch5 -p1 
+%patch6 -p1 
+%patch7 -p1 -b .759150
 
 %build
 %{__python} setup.py build
@@ -58,6 +82,24 @@ rm -rf %{buildroot}
 %endif
 
 %changelog
+* Thu Dec 13 2012 David Malcolm <dmalcolm@redhat.com> - 0.6-3
+- update python-ethtool-0.6-add-get_ipv4_addresses-method.patch, addressing
+bug 886644, memory leaks, and a crasher when the broadcast address is NULL
+Resolves: rhbz#886644
+
+* Fri Oct 12 2012 David Malcolm <dmalcolm@redhat.com> - 0.6-2
+- fix typo in pethtool --help
+Resolves: rhbz#692028
+- fix memory leaks
+Resolves: rhbz#698125
+- add IPv6 information to pifconfig
+Resolves: rhbz#698192
+- respect interface arguments to pifconfig
+Resolves: rhbz#714753
+- add a get_ipv4_addresses() method to ethtool.etherinfo to support devices
+with multiple IPv4 addresses
+Resolves: rhbz#759150
+
 * Wed Mar  2 2011 David Malcolm <dmalcolm@redhat.com> - 0.6-1
 - cherrypick fixes for Py_None reference leak, and for some error-handling bugs
 Resolves: rhbz#680269

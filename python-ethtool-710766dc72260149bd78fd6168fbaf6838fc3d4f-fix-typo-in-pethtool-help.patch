@@ -1,0 +1,26 @@
+From 710766dc72260149bd78fd6168fbaf6838fc3d4f Mon Sep 17 00:00:00 2001
+From: David Sommerseth <davids@redhat.com>
+Date: Wed, 30 Mar 2011 18:06:36 +0200
+Subject: [PATCH] Fixed typo in pethtool --help screen
+
+Signed-off-by: David Sommerseth <davids@redhat.com>
+---
+ pethtool.py |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/pethtool.py b/pethtool.py
+index 49d667e..bdd21a4 100755
+--- a/pethtool.py
++++ b/pethtool.py
+@@ -15,7 +15,7 @@
+ import getopt, ethtool, sys
+ 
+ def usage():
+-	print '''Usage: ethtool [OPTIONS] [<interface>]
++	print '''Usage: pethtool [OPTIONS] [<interface>]
+ 	-h|--help               Give this help list
+ 	-c|--show-coalesce      Show coalesce options
+ 	-C|--coalesce		Set coalesce options
+-- 
+1.7.4
+

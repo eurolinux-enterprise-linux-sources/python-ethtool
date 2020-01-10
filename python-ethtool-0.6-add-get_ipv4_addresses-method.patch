@@ -1,0 +1,568 @@
+diff -up python-ethtool-0.6/python-ethtool/etherinfo.c.759150 python-ethtool-0.6/python-ethtool/etherinfo.c
+--- python-ethtool-0.6/python-ethtool/etherinfo.c.759150	2012-12-13 16:40:36.632475905 -0500
++++ python-ethtool-0.6/python-ethtool/etherinfo.c	2012-12-13 16:43:51.348462590 -0500
+@@ -88,12 +88,8 @@ void free_etherinfo(struct etherinfo *pt
+ 	if( ptr->hwaddress ) {
+ 		free(ptr->hwaddress);
+ 	}
+-	if( ptr->ipv4_address ) {
+-		free(ptr->ipv4_address);
+-	}
+-	if( ptr->ipv4_broadcast ) {
+-		free(ptr->ipv4_broadcast);
+-	}
++	Py_XDECREF(ptr->ipv4_addresses);
++
+ 	if( ptr->ipv6_addresses ) {
+ 		free_ipv6addresses(ptr->ipv6_addresses);
+ 	}
+@@ -167,6 +163,36 @@ static void callback_nl_link(struct nl_o
+ 	SET_STR_VALUE(ethi->hwaddress, hwaddr);
+ }
+ 
++/**
++ * For use by callback_nl_address
++ * Returns 0 for success; -1 for error (though this is currently ignored)
++ */
++static int
++append_object_for_netlink_address(struct etherinfo *ethi,
++                                  struct nl_object *obj,
++                                  struct rtnl_addr *addr)
++{
++	PyObject *addr_obj;
++
++	assert(ethi);
++	assert(ethi->ipv4_addresses);
++	assert(addr);
++
++	addr_obj = make_python_address_from_rtnl_addr(obj, addr);
++	if (!addr_obj) {
++	  return -1;
++	}
++
++	if (-1 == PyList_Append(ethi->ipv4_addresses, addr_obj)) {
++	  Py_DECREF(addr_obj);
++	  return -1;
++	}
++
++	Py_DECREF(addr_obj);
++
++	/* Success */
++	return 0;
++}
+ 
+ /**
+  *  libnl callback function.  Does the real parsing of a record returned by NETLINK.  This function
+@@ -195,17 +221,7 @@ static void callback_nl_address(struct n
+ 		inet_ntop(family, nl_addr_get_binary_addr(addr), (char *)&ip_str, 64);
+ 
+ 		if( family == AF_INET ) {
+-			struct nl_addr *brdcst = rtnl_addr_get_broadcast((struct rtnl_addr *)obj);
+-			char brdcst_str[66];
+-
+-			SET_STR_VALUE(ethi->ipv4_address, ip_str);
+-			ethi->ipv4_netmask = rtnl_addr_get_prefixlen((struct rtnl_addr*) obj);
+-
+-			if( brdcst ) {
+-				memset(&brdcst_str, 0, 66);
+-				inet_ntop(family, nl_addr_get_binary_addr(brdcst), (char *)&brdcst_str, 64);
+-				SET_STR_VALUE(ethi->ipv4_broadcast, brdcst_str);
+-			}
++                        (void)append_object_for_netlink_address(ethi, obj, (struct rtnl_addr*) addr);
+ 		} else {
+ 			ethi->ipv6_addresses = etherinfo_add_ipv6(ethi->ipv6_addresses,
+ 								  ip_str,
+@@ -240,13 +256,18 @@ void dump_etherinfo(FILE *fp, struct eth
+ 		fprintf(fp, "MAC address: %s", ptr->hwaddress);
+ 	}
+ 	fprintf(fp, "\n");
+-	if( ptr->ipv4_address ) {
+-		fprintf(fp, "\tIPv4 Address: %s/%i",
+-			ptr->ipv4_address, ptr->ipv4_netmask);
+-		if( ptr->ipv4_broadcast ) {
+-			fprintf(fp, "  -  Broadcast: %s", ptr->ipv4_broadcast);
+-		}
+-		fprintf(fp, "\n");
++ 	if( ptr->ipv4_addresses ) {
++		Py_ssize_t i;
++		for (i = 0; i < PyList_Size(ptr->ipv4_addresses); i++) {
++			PyNetlinkIPv4Address *addr = (PyNetlinkIPv4Address *)PyList_GetItem(ptr->ipv4_addresses, i);
++			fprintf(fp, "\tIPv4 Address: %s/%i",
++                                PyString_AsString(addr->ipv4_address),
++                                addr->ipv4_netmask);
++                        if( addr->ipv4_broadcast ) {
++                              fprintf(fp, "  -  Broadcast: %s", PyString_AsString(addr->ipv4_broadcast));
++                        }
++                        fprintf(fp, "\n");
++                }
+ 	}
+ 	if( ptr->ipv6_addresses ) {
+ 		struct ipv6address *ipv6 = ptr->ipv6_addresses;
+@@ -324,6 +345,13 @@ int get_etherinfo(struct etherinfo *ethi
+                         ethinf->ipv6_addresses = NULL;
+                 }
+ 
++                /* Likewise for IPv4 addresses: */
++                Py_XDECREF(ethinf->ipv4_addresses);
++                ethinf->ipv4_addresses = PyList_New(0);
++                if (!ethinf->ipv4_addresses) {
++                        return 0;
++                }
++
+                 /* Retrieve all address information */
+ 		nl_cache_foreach_filter(addr_cache, (struct nl_object *)addr, callback_nl_address, ethinf);
+ 		rtnl_addr_put(addr);
+diff -up python-ethtool-0.6/python-ethtool/etherinfo_obj.c.759150 python-ethtool-0.6/python-ethtool/etherinfo_obj.c
+--- python-ethtool-0.6/python-ethtool/etherinfo_obj.c.759150	2012-12-13 16:40:36.633475905 -0500
++++ python-ethtool-0.6/python-ethtool/etherinfo_obj.c	2012-12-13 16:40:36.642475904 -0500
+@@ -89,6 +89,41 @@ int _ethtool_etherinfo_init(etherinfo_py
+ 	return 0;
+ }
+ 
++/*
++  The old approach of having a single IPv4 address per device meant each result
++  that came in from netlink overwrote the old result.
++
++  Mimic it by returning the last entry in the list (if any).
++
++  The return value is a *borrowed reference* (or NULL)
++*/
++static PyNetlinkIPv4Address*
++get_last_address(etherinfo_py *self)
++{
++	Py_ssize_t size;
++	PyObject *list;
++
++	assert(self);
++	list = self->data->ethinfo->ipv4_addresses;
++	if (!list) {
++		return NULL;
++	}
++
++	if (!PyList_Check(list)) {
++		return NULL;
++	}
++
++	size = PyList_Size(list);
++	if (size > 0) {
++		PyObject *item = PyList_GetItem(list, size - 1);
++		if (Py_TYPE(item) == &ethtool_netlink_ipv4_address_Type) {
++			return (PyNetlinkIPv4Address*)item;
++		}
++	}
++
++	return NULL;
++}
++
+ /**
+  * ethtool.etherinfo function for retrieving data from a Python object.
+  *
+@@ -101,6 +136,7 @@ PyObject *_ethtool_etherinfo_getter(ethe
+ {
+ 	PyObject *ret;
+ 	char *attr = PyString_AsString(attr_o);
++	PyNetlinkIPv4Address *py_addr;
+ 
+ 	if( !self || !self->data ) {
+ 		PyErr_SetString(PyExc_AttributeError, "No data available");
+@@ -114,13 +150,32 @@ PyObject *_ethtool_etherinfo_getter(ethe
+ 		ret = RETURN_STRING(self->data->ethinfo->hwaddress);
+ 	} else if( strcmp(attr, "ipv4_address") == 0 ) {
+ 		get_etherinfo(self->data->ethinfo, self->data->nlc, NLQRY_ADDR);
+-		ret = RETURN_STRING(self->data->ethinfo->ipv4_address);
++		/* For compatiblity with old approach, return last IPv4 address: */
++		py_addr = get_last_address(self);
++		if (py_addr) {
++		  if (py_addr->ipv4_address) {
++		      Py_INCREF(py_addr->ipv4_address);
++		      return py_addr->ipv4_address;
++		  }
++		}
++		Py_RETURN_NONE;
+ 	} else if( strcmp(attr, "ipv4_netmask") == 0 ) {
+ 		get_etherinfo(self->data->ethinfo, self->data->nlc, NLQRY_ADDR);
+-		ret = PyInt_FromLong(self->data->ethinfo->ipv4_netmask);
++		py_addr = get_last_address(self);
++		if (py_addr) {
++		  return PyInt_FromLong(py_addr->ipv4_netmask);
++		}
++		return PyInt_FromLong(0);
+ 	} else if( strcmp(attr, "ipv4_broadcast") == 0 ) {
+ 		get_etherinfo(self->data->ethinfo, self->data->nlc, NLQRY_ADDR);
+-		ret = RETURN_STRING(self->data->ethinfo->ipv4_broadcast);
++		py_addr = get_last_address(self);
++		if (py_addr) {
++		  if (py_addr->ipv4_broadcast) {
++		      Py_INCREF(py_addr->ipv4_broadcast);
++		      return py_addr->ipv4_broadcast;
++		  }
++		}
++		Py_RETURN_NONE;
+ 	} else {
+ 		ret = PyObject_GenericGetAttr((PyObject *)self, attr_o);
+ 	}
+@@ -170,19 +225,21 @@ PyObject *_ethtool_etherinfo_str(etherin
+ 		Py_DECREF(tmp);
+ 	}
+ 
+-	if( self->data->ethinfo->ipv4_address ) {
+-		PyObject *tmp = PyString_FromFormat("\tIPv4 address: %s/%i",
+-						   self->data->ethinfo->ipv4_address,
+-						   self->data->ethinfo->ipv4_netmask);
+-		if( self->data->ethinfo->ipv4_broadcast ) {
+-			PyObject *tmp2 = PyString_FromFormat("	  Broadcast: %s",
+-							     self->data->ethinfo->ipv4_broadcast);
+-			PyString_Concat(&tmp, tmp2);
+-			Py_DECREF(tmp2);
+-		}
+-		PyString_Concat(&tmp, PyString_FromString("\n"));
+-		PyString_Concat(&ret, tmp);
+-		Py_DECREF(tmp);
++	if( self->data->ethinfo->ipv4_addresses ) {
++               Py_ssize_t i;
++               for (i = 0; i < PyList_Size(self->data->ethinfo->ipv4_addresses); i++) {
++                       PyNetlinkIPv4Address *py_addr = (PyNetlinkIPv4Address *)PyList_GetItem(self->data->ethinfo->ipv4_addresses, i);
++                       PyObject *tmp = PyString_FromFormat("\tIPv4 address: ");
++                       PyString_Concat(&tmp, py_addr->ipv4_address);
++                       PyString_ConcatAndDel(&tmp, PyString_FromFormat("/%d", py_addr->ipv4_netmask));
++                       if (py_addr->ipv4_broadcast ) {
++                                PyString_ConcatAndDel(&tmp,
++                                                      PyString_FromString("	  Broadcast: "));
++                                PyString_Concat(&tmp, py_addr->ipv4_broadcast);
++                       }
++                       PyString_ConcatAndDel(&tmp, PyString_FromString("\n"));
++                       PyString_ConcatAndDel(&ret, tmp);
++               }
+ 	}
+ 
+ 	if( self->data->ethinfo->ipv6_addresses ) {
+@@ -203,6 +260,24 @@ PyObject *_ethtool_etherinfo_str(etherin
+ 	return ret;
+ }
+ 
++static PyObject *
++_ethtool_etherinfo_get_ipv4_addresses(etherinfo_py *self, PyObject *notused) {
++	PyObject *ret;
++
++	if( !self || !self->data ) {
++		PyErr_SetString(PyExc_AttributeError, "No data available");
++		return NULL;
++	}
++
++	get_etherinfo(self->data->ethinfo, self->data->nlc, NLQRY_ADDR);
++
++	/* Transfer ownership of reference: */
++	ret = self->data->ethinfo->ipv4_addresses;
++	self->data->ethinfo->ipv4_addresses = NULL;
++
++	return ret;
++}
++
+ 
+ /**
+  * Returns a tuple list of ethertool.etherinfo_ipv6addr objects, containing configured
+@@ -276,30 +351,14 @@ PyObject * _ethtool_etherinfo_get_ipv6_a
+  *
+  */
+ static PyMethodDef _ethtool_etherinfo_methods[] = {
++	{"get_ipv4_addresses", _ethtool_etherinfo_get_ipv4_addresses, METH_NOARGS,
++	 "Retrieve configured IPv4 addresses.  Returns a list of NetlinkIP4Address objects"},
+ 	{"get_ipv6_addresses", _ethtool_etherinfo_get_ipv6_addresses, METH_NOARGS,
+ 	 "Retrieve configured IPv6 addresses.  Returns a tuple list of etherinfo_ipv6addr objects"},
+ 	{NULL}  /**< No methods defined */
+ };
+ 
+ /**
+- * Defines all accessible object members
+- *
+- */
+-static PyMemberDef _ethtool_etherinfo_members[] = {
+-    {"device", T_OBJECT_EX, offsetof(etherinfo_py, data), 0,
+-     "Device name of the interface"},
+-    {"mac_address", T_OBJECT_EX, offsetof(etherinfo_py, data), 0,
+-     "MAC address / hardware address of the interface"},
+-    {"ipv4_address", T_OBJECT_EX, offsetof(etherinfo_py, data), 0,
+-     "IPv4 address"},
+-    {"ipv4_netmask", T_INT, offsetof(etherinfo_py, data), 0,
+-     "IPv4 netmask in bits"},
+-    {"ipv4_broadcast", T_OBJECT_EX, offsetof(etherinfo_py, data), 0,
+-     "IPv4 broadcast address"},
+-    {NULL}  /* End of member list */
+-};
+-
+-/**
+  * Definition of the functions a Python class/object requires.
+  *
+  */
+@@ -333,7 +392,7 @@ PyTypeObject ethtool_etherinfoType = {
+     0,		               /* tp_iter */
+     0,		               /* tp_iternext */
+     _ethtool_etherinfo_methods,            /* tp_methods */
+-    _ethtool_etherinfo_members,            /* tp_members */
++    0,                         /* tp_members */
+     0,                         /* tp_getset */
+     0,                         /* tp_base */
+     0,                         /* tp_dict */
+diff -up python-ethtool-0.6/python-ethtool/etherinfo_struct.h.759150 python-ethtool-0.6/python-ethtool/etherinfo_struct.h
+--- python-ethtool-0.6/python-ethtool/etherinfo_struct.h.759150	2012-12-13 16:40:36.616475906 -0500
++++ python-ethtool-0.6/python-ethtool/etherinfo_struct.h	2012-12-13 16:40:36.643475904 -0500
+@@ -13,6 +13,8 @@
+  * General Public License for more details.
+  */
+ 
++#include <netlink/route/addr.h>
++
+ /**
+  * @file   etherinfo_struct.h
+  * @author David Sommerseth <dsommers@wsdsommers.usersys.redhat.com>
+@@ -33,12 +35,18 @@ struct etherinfo {
+ 	char *device;                       /**< Device name */
+ 	int index;                          /**< NETLINK index reference */
+ 	char *hwaddress;                    /**< HW address / MAC address of device */
+-	char *ipv4_address;                 /**< Configured IPv4 address */
+-	int ipv4_netmask;                   /**< Configured IPv4 netmask */
+-	char *ipv4_broadcast;               /**< Configured IPv4 broadcast address */
++	PyObject *ipv4_addresses;        /**< list of PyNetlinkIPv4Address instances */
+ 	struct ipv6address *ipv6_addresses; /**< Configured IPv6 addresses (as a pointer chain) */
+ };
+ 
++/* Python object containing data baked from a (struct rtnl_addr) */
++typedef struct PyNetlinkIPv4Address {
++	PyObject_HEAD
++	PyObject *ipv4_address;		/**< string: Configured IPv4 address */
++	int ipv4_netmask;		/**< int: Configured IPv4 netmask */
++	PyObject *ipv4_broadcast;	/**< string: Configured IPv4 broadcast address */
++} PyNetlinkIPv4Address;
++extern PyTypeObject ethtool_netlink_ipv4_address_Type;
+ 
+ /**
+  * Pointer chain with IPv6 addresses associated with a ethernet interface.  Used
+@@ -89,4 +97,9 @@ typedef struct {
+  */
+ #define RETURN_STRING(str) (str ? PyString_FromString(str) : (Py_INCREF(Py_None), Py_None))
+ 
++PyObject *
++make_python_address_from_rtnl_addr(struct nl_object *obj,
++                                   struct rtnl_addr *addr);
++
++
+ #endif
+diff -up python-ethtool-0.6/python-ethtool/ethtool.c.759150 python-ethtool-0.6/python-ethtool/ethtool.c
+--- python-ethtool-0.6/python-ethtool/ethtool.c.759150	2012-12-13 16:40:36.633475905 -0500
++++ python-ethtool-0.6/python-ethtool/ethtool.c	2012-12-13 16:40:36.644475904 -0500
+@@ -1048,6 +1048,9 @@ PyMODINIT_FUNC initethtool(void)
+ 				   PyCObject_FromVoidPtr(&nlconnection, close_netlink));
+ 	}
+ 
++	if (PyType_Ready(&ethtool_netlink_ipv4_address_Type))
++		return;
++
+ 	// Setup constants
+ 	PyModule_AddIntConstant(m, "IFF_UP", IFF_UP);			/* Interface is up. */
+ 	PyModule_AddIntConstant(m, "IFF_BROADCAST", IFF_BROADCAST);	/* Broadcast address valid. */
+diff -up python-ethtool-0.6/python-ethtool/netlink-address.c.759150 python-ethtool-0.6/python-ethtool/netlink-address.c
+--- python-ethtool-0.6/python-ethtool/netlink-address.c.759150	2012-12-13 16:40:36.644475904 -0500
++++ python-ethtool-0.6/python-ethtool/netlink-address.c	2012-12-13 16:40:36.644475904 -0500
+@@ -0,0 +1,162 @@
++/*
++ * Copyright (C) 2011, 2012 Red Hat Inc.
++ *
++ * David Malcolm <dmalcolm@redhat.com>
++ *
++ * This application is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the Free
++ * Software Foundation; version 2.
++ *
++ * This application is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
++ * General Public License for more details.
++ */
++
++/* Python object corresponding to a (struct rtnl_addr) */
++#include <Python.h>
++#include "structmember.h"
++
++#include <netlink/route/rtnl.h>
++#include "etherinfo_struct.h"
++#include "etherinfo.h"
++
++/* IPv4 Addresses: */
++static PyObject *
++PyNetlinkIPv4Address_from_rtnl_addr(struct nl_object *nl_obj, struct rtnl_addr *addr)
++{
++	PyNetlinkIPv4Address *py_obj;
++	char buf[INET_ADDRSTRLEN+1];
++	struct nl_addr *brdcst;
++
++	py_obj = PyObject_New(PyNetlinkIPv4Address,
++			      &ethtool_netlink_ipv4_address_Type);
++	if (!py_obj) {
++		return NULL;
++	}
++
++	/* Set ipv4_address: */
++	memset(&buf, 0, sizeof(buf));
++	if (!inet_ntop(AF_INET, nl_addr_get_binary_addr((struct nl_addr *)addr),
++		       buf, sizeof(buf))) {
++		PyErr_SetFromErrno(PyExc_RuntimeError);
++		goto error;
++	}
++	py_obj->ipv4_address = PyString_FromString(buf);
++	if (!py_obj->ipv4_address) {
++		goto error;
++	}
++	
++	/* Set ipv4_netmask: */
++	py_obj->ipv4_netmask = rtnl_addr_get_prefixlen((struct rtnl_addr*)nl_obj);
++
++	/* Set ipv4_broadcast: */
++	py_obj->ipv4_broadcast = NULL;
++	brdcst = rtnl_addr_get_broadcast((struct rtnl_addr*)nl_obj);
++	if( brdcst ) {
++		memset(&buf, 0, sizeof(buf));
++		if (!inet_ntop(AF_INET, nl_addr_get_binary_addr(brdcst),
++			       buf, sizeof(buf))) {
++			PyErr_SetFromErrno(PyExc_RuntimeError);
++			goto error;
++		}
++		py_obj->ipv4_broadcast = PyString_FromString(buf);
++		if (!py_obj->ipv4_broadcast) {
++			goto error;
++		}
++	}
++	
++	return (PyObject*)py_obj;
++	
++ error:
++	Py_DECREF(py_obj);
++	return NULL;
++}
++
++static void
++netlink_ipv4_address_dealloc(PyNetlinkIPv4Address *obj)
++{
++	Py_DECREF(obj->ipv4_address);
++	Py_XDECREF(obj->ipv4_broadcast);
++
++	/* We can call PyObject_Del directly rather than calling through
++	   tp_free since the type is not subtypable (Py_TPFLAGS_BASETYPE is
++	   not set): */
++	PyObject_Del(obj);
++}
++
++static PyObject*
++netlink_ipv4_address_repr(PyNetlinkIPv4Address *obj)
++{
++	PyObject *result = PyString_FromString("ethtool.NetlinkIPv4Address(address='");
++	PyString_Concat(&result, obj->ipv4_address);
++	PyString_ConcatAndDel(&result,
++			      PyString_FromFormat("', netmask=%d",
++						  obj->ipv4_netmask));
++	if (obj->ipv4_broadcast) {
++		PyString_ConcatAndDel(&result, PyString_FromString(", broadcast='"));
++		PyString_Concat(&result, obj->ipv4_broadcast);
++		PyString_ConcatAndDel(&result, PyString_FromString("'"));
++	}
++	PyString_ConcatAndDel(&result, PyString_FromString(")"));
++	return result;
++}
++
++static PyMemberDef _ethtool_netlink_ipv4_address_members[] = {
++	{"address",
++	 T_OBJECT_EX,
++	 offsetof(PyNetlinkIPv4Address, ipv4_address),
++	 0,
++	 NULL},
++	{"netmask",
++	 T_INT,
++	 offsetof(PyNetlinkIPv4Address, ipv4_netmask),
++	 0,
++	 NULL},
++	{"broadcast",
++	 T_OBJECT, /* can be NULL */
++	 offsetof(PyNetlinkIPv4Address, ipv4_broadcast),
++	 0,
++	 NULL},
++	{NULL}  /* End of member list */
++};
++
++PyTypeObject ethtool_netlink_ipv4_address_Type = {
++	PyVarObject_HEAD_INIT(0, 0)
++	.tp_name = "ethtool.NetlinkIPv4Address",
++	.tp_basicsize = sizeof(PyNetlinkIPv4Address),
++	.tp_dealloc = (destructor)netlink_ipv4_address_dealloc,
++	.tp_repr = (reprfunc)netlink_ipv4_address_repr,
++	.tp_members = _ethtool_netlink_ipv4_address_members,
++};
++
++/* Factory function, in case we want to generalize this to add IPv6 support */
++PyObject *
++make_python_address_from_rtnl_addr(struct nl_object *obj,
++				   struct rtnl_addr *addr)
++{
++	int family;
++	assert(addr);
++
++	family = nl_addr_get_family((struct nl_addr *)addr);
++
++	switch( family ) {
++
++	case AF_INET:
++		return PyNetlinkIPv4Address_from_rtnl_addr(obj, addr);
++		
++		/*
++		  For now, we just support IPv4 addresses.
++		*/
++		
++	default:
++		return PyErr_SetFromErrno(PyExc_RuntimeError);
++	}
++}
++
++/*
++Local variables:
++c-basic-offset: 8
++indent-tabs-mode: y
++End:
++*/
+diff -up python-ethtool-0.6/python-ethtool/test.py.759150 python-ethtool-0.6/python-ethtool/test.py
+--- python-ethtool-0.6/python-ethtool/test.py.759150	2012-12-13 16:40:36.645475904 -0500
++++ python-ethtool-0.6/python-ethtool/test.py	2012-12-13 16:40:36.644475904 -0500
+@@ -0,0 +1,12 @@
++import ethtool
++for dev in ethtool.get_devices():
++    print 'dev: %r' % dev
++    info = ethtool.get_interfaces_info(dev)
++    for interface in info:
++        for addr in interface.get_ipv4_addresses():
++            print '  addr: %r' % addr
++            print '  addr.address: %r' % addr.address
++            print '  addr.netmask: %r' % addr.netmask
++            print '  addr.broadcast: %r' % addr.broadcast
++            print '  dir(addr): %r' % dir(addr)
++
+diff -up python-ethtool-0.6/setup.py.759150 python-ethtool-0.6/setup.py
+--- python-ethtool-0.6/setup.py.759150	2011-01-19 10:32:29.000000000 -0500
++++ python-ethtool-0.6/setup.py	2012-12-13 16:40:36.645475904 -0500
+@@ -6,10 +6,6 @@ import sys
+ 
+ version = '0.6'
+ 
+-ethtool = Extension('ethtool',
+-		    sources = ['python-ethtool/ethtool.c',
+-                               'python-ethtool/etherinfo.c', 'python-ethtool/etherinfo_obj.c'])
+-
+ def pkgconfig(pkg):
+     def _str2list(pkgstr, onlystr):
+         res = []
+@@ -63,7 +59,8 @@ setup(name='ethtool',
+                 'python-ethtool/ethtool.c',
+                 'python-ethtool/etherinfo.c',
+                 'python-ethtool/etherinfo_obj.c',
+-                'python-ethtool/etherinfo_ipv6_obj.c'],
++                'python-ethtool/etherinfo_ipv6_obj.c',
++                'python-ethtool/netlink-address.c'],
+             include_dirs = libnl['include'],
+             library_dirs = libnl['libdirs'],
+             libraries = libnl['libs'],

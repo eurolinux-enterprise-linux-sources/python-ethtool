@@ -1,0 +1,22 @@
+diff -up python-ethtool-0.6/pifconfig.py.adding-ipv6-info python-ethtool-0.6/pifconfig.py
+--- python-ethtool-0.6/pifconfig.py.adding-ipv6-info	2011-07-01 18:42:10.015244244 -0400
++++ python-ethtool-0.6/pifconfig.py	2011-07-01 18:51:15.670110602 -0400
+@@ -69,9 +69,15 @@ def show_config(device):
+           inet addr:%s''' % ipaddr,
+ 	if not (flags & (ethtool.IFF_LOOPBACK | ethtool.IFF_POINTOPOINT)):
+ 		print "Bcast:%s" % ethtool.get_broadcast(device),
+-	print '''  Mask:%s
+-	  %s
+-''' % (netmask, flags2str(flags))
++	print '  Mask:%s' % netmask
++	for info in ethtool.get_interfaces_info(device):
++		for addr in info.get_ipv6_addresses():
++			print ("	  inet6 addr: %s/%s Scope: %s"
++			       % (addr.address,
++				  addr.netmask,
++				  addr.scope))
++	print '	  %s' % flags2str(flags)
++	print
+ 
+ def main():
+ 	global all_devices

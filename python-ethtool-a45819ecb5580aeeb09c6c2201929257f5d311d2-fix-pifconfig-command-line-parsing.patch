@@ -1,0 +1,103 @@
+From a45819ecb5580aeeb09c6c2201929257f5d311d2 Mon Sep 17 00:00:00 2001
+From: David Sommerseth <davids@redhat.com>
+Date: Tue, 21 Jun 2011 10:06:36 +0200
+Subject: [PATCH] Make pifconfig respect interface arguments from the command
+ line
+
+pifconfig did not pay attention to any arguments give on the command
+line, which should only list selected devices.  This patch revamps the
+argument parsing, to behave as described in usage and man page.
+
+Signed-off-by: David Sommerseth <davids@redhat.com>
+---
+ man/pifconfig.8.asciidoc |    8 ++++----
+ pifconfig.py             |   34 ++++++++++++++--------------------
+ 2 files changed, 18 insertions(+), 24 deletions(-)
+
+diff --git a/man/pifconfig.8.asciidoc b/man/pifconfig.8.asciidoc
+index cbd48b8..cee048d 100644
+--- a/man/pifconfig.8.asciidoc
++++ b/man/pifconfig.8.asciidoc
+@@ -8,7 +8,7 @@ pifconfig - display information about a network interface
+ 
+ SYNOPSIS
+ --------
+-pifconfig [INTERFACE]
++pifconfig [INTERFACE [INTERFACE [INTERFACE] ...]]
+ 
+ 
+ DESCRIPTION
+@@ -22,8 +22,8 @@ OPTIONS
+ -------
+ 
+ INTERFACE::
+-Display information about only this interface. If no interface is given
+-then all interfaces are displayed.
++Display information about only the listed interfaces. If no interface is given
++all interfaces are displayed.
+ 
+ -h, --help::
+ Show help message and exit.
+@@ -39,4 +39,4 @@ AUTHORS
+ -------
+ Arnaldo Carvalho de Melo <acme@redhat.com>
+ 
+-Man page written by Miroslav Suchý <msuchy@redhat.com>
++Man page written by Miroslav Suchý <msuchy@redhat.com>, David Sommerseth <davids@redhat.com>
+diff --git a/pifconfig.py b/pifconfig.py
+index cfaa2a6..d509483 100755
+--- a/pifconfig.py
++++ b/pifconfig.py
+@@ -15,11 +15,7 @@
+ #   General Public License for more details.
+ 
+ import getopt, ethtool, sys
+-
+-def usage():
+-	print '''Usage:
+-  pifconfig <interface>
+-'''
++from optparse import OptionParser
+ 
+ def flags2str(flags):
+ 	string = ""
+@@ -76,23 +72,21 @@ def show_config(device):
+ def main():
+ 	global all_devices
+ 
+-	try:
+-		opts, args = getopt.getopt(sys.argv[1:],
+-					   "h",
+-					   ("help",))
+-	except getopt.GetoptError, err:
+-		usage()
+-		print str(err)
+-		sys.exit(2)
++        usage="usage: %prog [interface [interface [interface] ...]]"
++        parser = OptionParser(usage=usage)
++        (opts, args) = parser.parse_args()
+ 
+-	for o, a in opts:
+-		if o in ("-h", "--help"):
+-			usage()
+-			return
++        if args is None or len(args) == 0:
++                sel_devs = ethtool.get_active_devices()
++        else:
++                sel_devs = args
+ 
+-	active_devices = ethtool.get_active_devices()
+-	for device in active_devices:
+-		show_config(device)
++	for device in sel_devs:
++                try:
++                        show_config(device)
++                except Exception, ex:
++                        print "** ERROR ** [Device %s]: %s" % (device, str(ex))
++                        sys.exit(2)
+ 
+ if __name__ == '__main__':
+     main()
+-- 
+1.7.4.4
+
