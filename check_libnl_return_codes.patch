@@ -1,0 +1,54 @@
+diff --git a/python-ethtool/etherinfo.c b/python-ethtool/etherinfo.c
+index 3d2072b..04acbbd 100644
+--- a/python-ethtool/etherinfo.c
++++ b/python-ethtool/etherinfo.c
+@@ -294,6 +294,9 @@ int get_etherinfo(struct etherinfo *ethinf, struct nl_handle *nlc, nlQuery query
+ 	 */
+ 	if( ethinf->index < 0 ) {
+ 		link_cache = rtnl_link_alloc_cache(nlc);
++		if( link_cache == NULL ) {
++			return 0;
++		}
+ 		ethinf->index = rtnl_link_name2i(link_cache, ethinf->device);
+ 		if( ethinf->index < 0 ) {
+ 			return 0;
+@@ -306,6 +309,9 @@ int get_etherinfo(struct etherinfo *ethinf, struct nl_handle *nlc, nlQuery query
+ 	case NLQRY_LINK:
+ 		/* Extract MAC/hardware address of the interface */
+ 		link_cache = rtnl_link_alloc_cache(nlc);
++		if( link_cache == NULL ) {
++			return 0;
++		}
+ 		link = rtnl_link_alloc();
+ 		rtnl_link_set_ifindex(link, ethinf->index);
+ 		nl_cache_foreach_filter(link_cache, (struct nl_object *)link, callback_nl_link, ethinf);
+@@ -317,7 +323,14 @@ int get_etherinfo(struct etherinfo *ethinf, struct nl_handle *nlc, nlQuery query
+ 	case NLQRY_ADDR:
+ 		/* Extract IP address information */
+ 		addr_cache = rtnl_addr_alloc_cache(nlc);
++		if( addr_cache == NULL ) {
++			return 0;
++		}
+ 		addr = rtnl_addr_alloc();
++		if( addr == NULL ) {
++			nl_cache_free(addr_cache);
++			return 0;
++		}
+ 		rtnl_addr_set_ifindex(addr, ethinf->index);
+ 
+                 /* Make sure we don't have any old IPv6 addresses saved */
+diff --git a/python-ethtool/ethtool.c b/python-ethtool/ethtool.c
+index a29f052..a913f3d 100644
+--- a/python-ethtool/ethtool.c
++++ b/python-ethtool/ethtool.c
+@@ -985,7 +985,9 @@ int open_netlink(struct nl_handle **nlc)
+ 	}
+ 
+ 	*nlc = nl_handle_alloc();
+-	nl_connect(*nlc, NETLINK_ROUTE);
++	if( nl_connect(*nlc, NETLINK_ROUTE) != 0 ) {
++                return 0;
++        }
+ 	return (*nlc != NULL);
+ }
+ 
