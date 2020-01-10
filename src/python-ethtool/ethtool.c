@@ -1,7 +1,8 @@
 /*
- * Copyright (C) 2008 Red Hat Inc.
+ * Copyright (C) 2008-2010 Red Hat Inc.
  *
  * Arnaldo Carvalho de Melo <acme@redhat.com>
+ * David Sommerseth <davids@redhat.com>
  *
  * First bits from a Red Hat config tool by Harald Hoyer.
  *
@@ -25,6 +26,18 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+
+#include "etherinfo_struct.h"
+#include "etherinfo_obj.h"
+#include "etherinfo.h"
+
+static struct nl_handle *nlconnection = NULL;
+extern PyTypeObject ethtool_etherinfoType;
+extern PyTypeObject ethtool_etherinfoIPv6Type;
+
+#ifndef IFF_DYNAMIC
+#define IFF_DYNAMIC     0x8000          /* dialup device with changing addresses*/
+#endif
 
 typedef unsigned long long u64;
 typedef __uint32_t u32;
@@ -212,6 +225,111 @@ static PyObject *get_ipaddress(PyObject *self __unused, PyObject *args)
 
 	return PyString_FromString(ipaddr);
 }
+
+
+/**
+ * Retrieves the current information about all interfaces.  All interfaces will be
+ * returned as a list of objects per interface.
+ *
+ * @param self Not used
+ * @param args Python arguments
+ *
+ * @return Python list of objects on success, otherwise NULL.
+ */
+static PyObject *get_interfaces_info(PyObject *self __unused, PyObject *args) {
+	PyObject *devlist = NULL, *ethinf_py = NULL;
+	PyObject *inargs = NULL;
+	char **fetch_devs;
+	int i = 0, fetch_devs_len = 0;
+
+	if (!PyArg_ParseTuple(args, "|O", &inargs)) {
+		PyErr_SetString(PyExc_LookupError,
+				"Argument must be either a string, list or a tuple");
+		return NULL;
+	}
+
+	/* Parse input arguments if we got them */
+	if( inargs != NULL ) {
+		if( PyString_Check(inargs) ) { /* Input argument is just a string */
+			fetch_devs_len = 1;
+			fetch_devs = calloc(1, sizeof(char *));
+			fetch_devs[0] = PyString_AsString(inargs);
+		} else if( PyTuple_Check(inargs) ) { /* Input argument is a tuple list with devices */
+			int j = 0;
+
+			fetch_devs_len = PyTuple_Size(inargs);
+			fetch_devs = calloc(fetch_devs_len+1, sizeof(char *));
+			for( i = 0; i < fetch_devs_len; i++ ) {
+				PyObject *elmt = PyTuple_GetItem(inargs, i);
+				if( elmt && PyString_Check(elmt) ) {
+					fetch_devs[j++] = PyString_AsString(elmt);
+				}
+			}
+			fetch_devs_len = j;
+		} else if( PyList_Check(inargs) ) { /* Input argument is a list with devices */
+			int j = 0;
+
+			fetch_devs_len = PyList_Size(inargs);
+			fetch_devs = calloc(fetch_devs_len+1, sizeof(char *));
+			for( i = 0; i < fetch_devs_len; i++ ) {
+				PyObject *elmt = PyList_GetItem(inargs, i);
+				if( elmt && PyString_Check(elmt) ) {
+					fetch_devs[j++] = PyString_AsString(elmt);
+				}
+			}
+			fetch_devs_len = j;
+		} else {
+			PyErr_SetString(PyExc_LookupError,
+					"Argument must be either a string, list or a tuple");
+			return NULL;
+		}
+	}
+
+	devlist = PyList_New(0);
+	for( i = 0; i < fetch_devs_len; i++ ) {
+		struct etherinfo_obj_data *objdata = NULL;
+
+		/* Allocate memory for data structures for each device */
+		objdata = calloc(1, sizeof(struct etherinfo_obj_data));
+		if( !objdata ) {
+			PyErr_SetString(PyExc_OSError, strerror(errno));
+			return NULL;
+		}
+
+		objdata->ethinfo = calloc(1, sizeof(struct etherinfo));
+		if( !objdata->ethinfo ) {
+			PyErr_SetString(PyExc_OSError, strerror(errno));
+			return NULL;
+		}
+
+		/* Store the device name and a reference to the NETLINK connection for
+		 * objects to use when quering for device info
+		 */
+		objdata->ethinfo->device = strdup(fetch_devs[i]);
+		objdata->ethinfo->index = -1;
+		objdata->nlc = nlconnection; /* Global variable */
+
+		/* Instantiate a new etherinfo object with the device information */
+		ethinf_py = PyCObject_FromVoidPtr(objdata, NULL);
+		if( ethinf_py ) {
+			/* Prepare the argument list for the object constructor */
+			PyObject *args = PyTuple_New(1);
+			PyTuple_SetItem(args, 0, ethinf_py);
+
+			/* Create the object */
+			PyObject *dev = PyObject_CallObject((PyObject *)&ethtool_etherinfoType, args);
+			if( dev ) {
+				PyList_Append(devlist, dev);
+			}
+		}
+	}
+	if( fetch_devs_len > 0 ) {
+		free(fetch_devs);
+	}
+
+	return devlist;
+}
+
 
 static PyObject *get_flags (PyObject *self __unused, PyObject *args)
 {
@@ -772,6 +890,13 @@ static struct PyMethodDef PyEthModuleMethods[] = {
 		.ml_flags = METH_VARARGS,
 	},
 	{
+		.ml_name = "get_interfaces_info",
+		.ml_meth = (PyCFunction)get_interfaces_info,
+		.ml_flags = METH_VARARGS,
+		.ml_doc = "Accepts a string, list or tupples of interface names. "
+		"Returns a list of ethtool.etherinfo objets with device information."
+	},
+	{
 		.ml_name = "get_netmask",
 		.ml_meth = (PyCFunction)get_netmask,
 		.ml_flags = METH_VARARGS,
@@ -844,10 +969,77 @@ static struct PyMethodDef PyEthModuleMethods[] = {
 	{	.ml_name = NULL, },
 };
 
+
+/**
+ * Connects to the NETLINK interface.  This should only be
+ * called once as part of the main ethtool module init.
+ *
+ * @param nlc Structure which keeps the NETLINK connection handle (struct nl_handle)
+ *
+ * @return Returns 1 on success, otherwise 0.
+ */
+int open_netlink(struct nl_handle **nlc)
+{
+	if( *nlc ) {
+		return 0;
+	}
+
+	*nlc = nl_handle_alloc();
+	nl_connect(*nlc, NETLINK_ROUTE);
+	return (*nlc != NULL);
+}
+
+
+/**
+ * Closes the NETLINK connection.  This should be called automatically whenever
+ * the ethtool module is unloaded from Python.
+ *
+ * @param ptr  Pointer to the pointer of struct nl_handle, which contains the NETLINK connection
+ */
+void close_netlink(void **ptr)
+{
+	struct nl_handle *nlc;
+
+	if( !ptr && !*ptr ) {
+		return;
+	}
+
+	nlc = (struct nl_handle *) *ptr;
+	if( !nlc ) {
+		return;
+	}
+
+	/* Close NETLINK connection */
+	nl_close(nlc);
+	nl_handle_destroy(nlc);
+	*ptr = NULL; /* reset the pointers pointer address */
+}
+
+
 PyMODINIT_FUNC initethtool(void)
 {
 	PyObject *m;
-	m = Py_InitModule("ethtool", PyEthModuleMethods);
+	m = Py_InitModule3("ethtool", PyEthModuleMethods, "Python ethtool module");
+
+	// Prepare the ethtool.etherinfo class
+	if (PyType_Ready(&ethtool_etherinfoType) < 0)
+		return;
+	Py_INCREF(&ethtool_etherinfoType);
+	PyModule_AddObject(m, "etherinfo", (PyObject *)&ethtool_etherinfoType);
+
+	// Prepare the ethtool.etherinfo_ipv6addr class
+	if (PyType_Ready(&ethtool_etherinfoIPv6Type) < 0)
+		return;
+	Py_INCREF(&ethtool_etherinfoIPv6Type);
+	PyModule_AddObject(m, "etherinfo_ipv6addr", (PyObject *)&ethtool_etherinfoIPv6Type);
+
+	// Prepare an internal netlink connection object
+	if( open_netlink(&nlconnection) ) {
+		PyModule_AddObject(m, "__nlconnection",
+				   PyCObject_FromVoidPtr(&nlconnection, close_netlink));
+	}
+
+	// Setup constants
 	PyModule_AddIntConstant(m, "IFF_UP", IFF_UP);			/* Interface is up. */
 	PyModule_AddIntConstant(m, "IFF_BROADCAST", IFF_BROADCAST);	/* Broadcast address valid. */
 	PyModule_AddIntConstant(m, "IFF_DEBUG", IFF_DEBUG);		/* Turn on debugging. */
@@ -864,6 +1056,8 @@ PyMODINIT_FUNC initethtool(void)
 	PyModule_AddIntConstant(m, "IFF_PORTSEL", IFF_PORTSEL);		/* Can set media type. */
 	PyModule_AddIntConstant(m, "IFF_AUTOMEDIA", IFF_AUTOMEDIA);	/* Auto media select active. */
 	PyModule_AddIntConstant(m, "IFF_DYNAMIC", IFF_DYNAMIC);		/* Dialup device with changing addresses.  */
+	PyModule_AddIntConstant(m, "AF_INET", AF_INET);                 /* IPv4 interface */
+	PyModule_AddIntConstant(m, "AF_INET6", AF_INET6);               /* IPv6 interface */
+	PyModule_AddStringConstant(m, "version", "python-ethtool v" VERSION);
 }
-
 

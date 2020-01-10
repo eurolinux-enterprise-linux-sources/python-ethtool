@@ -1,0 +1,33 @@
+From: David Sommerseth <davids@redhat.com>
+Date: Fri, 25 Feb 2011 08:57:04 +0000 (+0100)
+Subject: RETURN_STRING() did not use Py_INCREF() when returning Py_None
+X-Git-Url: http://fedorapeople.org/gitweb?p=dsommers%2Fpublic_git%2Fpython-ethtool.git;a=commitdiff_plain;h=aa2c20e697af1907b92129410aa10952a3ffdd68
+
+RETURN_STRING() did not use Py_INCREF() when returning Py_None
+
+From RH BZ#680269:
+
+     #define RETURN_STRING(str) (str ? PyString_FromString(str) : Py_None)
+
+  This isn't incrementing the reference count on the Py_None singleton when it
+  should be (the caller assumes that it "owns" a ref on the result of _getter,
+  and will decref it), it could cause the python process to bail out:
+    "Fatal Python error: deallocating None"
+  if run repeatedly.
+
+Reported-by: Dave Malcolm <dmalcolm@redhat.com>
+Signed-off-by: David Sommerseth <davids@redhat.com>
+---
+
+diff --git a/python-ethtool/etherinfo_struct.h b/python-ethtool/etherinfo_struct.h
+index b1d453f..3ae037f 100644
+--- a/python-ethtool/etherinfo_struct.h
++++ b/python-ethtool/etherinfo_struct.h
+@@ -87,6 +87,6 @@ typedef struct {
+  *
+  * @return Returns a PyObject with either the input string wrapped up, or a Python None value.
+  */
+-#define RETURN_STRING(str) (str ? PyString_FromString(str) : Py_None)
++#define RETURN_STRING(str) (str ? PyString_FromString(str) : (Py_INCREF(Py_None), Py_None))
+ 
+ #endif
