@@ -1,0 +1,9 @@
+COPYING
+pethtool.py
+pifconfig.py
+python-ethtool/ethtool.c
+python-ethtool/ethtool-copy.h
+setup.py
+rpm/SPECS/python-ethtool.spec
+MANIFEST
+Makefile
