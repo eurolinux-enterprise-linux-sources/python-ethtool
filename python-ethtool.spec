@@ -4,20 +4,11 @@
 Summary: Ethernet settings python bindings
 Name: python-ethtool
 Version: 0.8
-Release: 8%{?dist}
-URL: https://github.com/fedora-python/%{name}
-Source: https://github.com/fedora-python/%{name}/archive/v%{version}.tar.gz
+Release: 2%{?dist}
+URL: http://git.fedorahosted.org/cgit/python-ethtool.git
+Source: https://fedorahosted.org/releases/p/y/python-ethtool/python-ethtool-%{version}.tar.bz2
 Patch0: python-ethtool-0.6-make-pifconfig-output-all-ipv4-addresses-for-interface.patch
 Patch1: python-ethtool-0.6-return-ipv6-only-interface-names.patch
-# Properly check libnl return codes and don't fall with segfault
-Patch2: python-ethtool-0.8-check-libnl-return-codes.patch
-# Fix display of long network interface names
-# Resolves: https://bugzilla.redhat.com/show_bug.cgi?id=1330432
-# Fixed upstream: https://github.com/fedora-python/python-ethtool/pull/31/files
-Patch3: fix-long-interface-names.patch
-# Resolves: https://bugzilla.redhat.com/show_bug.cgi?id=1467845
-Patch4: fix-missing-error-checking-when-reading-proc-net-dev.patch
-
 License: GPLv2
 Group: System Environment/Libraries
 BuildRequires: python-devel libnl-devel asciidoc
@@ -35,9 +26,6 @@ PCI locations.
 %setup -q
 %patch0 -p1
 %patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p1
 
 %build
 %{__python} setup.py build
@@ -68,28 +56,6 @@ rm -rf %{buildroot}
 %endif
 
 %changelog
-* Tue Dec 18 2018 Lumír Balhar <lbalhar@redhat.com> - 0.8-8
-- Fix missing error checking when reading from /proc/net/dev
-- Resolves: rhbz#1467845
-
-* Tue Apr 17 2018 Charalampos Stratakis <cstratak@redhat.com> - 0.8-7
-- Fix the URL's to point to the proper upstream repositories
-Resolves: rhbz#1502393
-
-* Mon Apr 16 2018 Charalampos Stratakis <cstratak@redhat.com> - 0.8-6
-- Fix diplay of long network interface names
-Resolves: rhbz#1330432
-
-* Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 0.8-5
-- Mass rebuild 2014-01-24
-
-* Mon Jan 13 2014 Bohuslav Kabrda <bkabrda@redhat.com> - 0.8-4
-- Properly check libnl return codes, don't segfault.
-Resolves: rhbz#1051392
-
-* Fri Dec 27 2013 Daniel Mach <dmach@redhat.com> - 0.8-3
-- Mass rebuild 2013-12-27
-
 * Thu Nov 07 2013 Bohuslav Kabrda <bkabrda@redhat.com> - 0.8-2
 - Fixed reporting of more IPv4 addresses per interface
 Resolves: rhbz#1027685
