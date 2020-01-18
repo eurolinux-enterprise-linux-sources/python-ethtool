@@ -4,7 +4,7 @@
 Summary: Ethernet settings python bindings
 Name: python-ethtool
 Version: 0.8
-Release: 7%{?dist}
+Release: 8%{?dist}
 URL: https://github.com/fedora-python/%{name}
 Source: https://github.com/fedora-python/%{name}/archive/v%{version}.tar.gz
 Patch0: python-ethtool-0.6-make-pifconfig-output-all-ipv4-addresses-for-interface.patch
@@ -15,6 +15,8 @@ Patch2: python-ethtool-0.8-check-libnl-return-codes.patch
 # Resolves: https://bugzilla.redhat.com/show_bug.cgi?id=1330432
 # Fixed upstream: https://github.com/fedora-python/python-ethtool/pull/31/files
 Patch3: fix-long-interface-names.patch
+# Resolves: https://bugzilla.redhat.com/show_bug.cgi?id=1467845
+Patch4: fix-missing-error-checking-when-reading-proc-net-dev.patch
 
 License: GPLv2
 Group: System Environment/Libraries
@@ -35,6 +37,7 @@ PCI locations.
 %patch1 -p1
 %patch2 -p1
 %patch3 -p1
+%patch4 -p1
 
 %build
 %{__python} setup.py build
@@ -65,6 +68,10 @@ rm -rf %{buildroot}
 %endif
 
 %changelog
+* Tue Dec 18 2018 Lumír Balhar <lbalhar@redhat.com> - 0.8-8
+- Fix missing error checking when reading from /proc/net/dev
+- Resolves: rhbz#1467845
+
 * Tue Apr 17 2018 Charalampos Stratakis <cstratak@redhat.com> - 0.8-7
 - Fix the URL's to point to the proper upstream repositories
 Resolves: rhbz#1502393
