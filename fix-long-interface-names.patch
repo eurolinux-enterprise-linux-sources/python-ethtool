@@ -1,0 +1,13 @@
+diff --git a/pifconfig.py b/pifconfig.py
+index 5557407..dbf9b2b 100755
+--- a/pifconfig.py
++++ b/pifconfig.py
+@@ -61,7 +61,7 @@ def bits2netmask(bits):
+ def show_config(device):
+ 	info = ethtool.get_interfaces_info(device)[0]
+ 	flags = ethtool.get_flags(device)
+-	print '%-9.9s' % device,
++	print '%s' % device,
+ 	if not (flags & ethtool.IFF_LOOPBACK):
+ 		print "HWaddr %s" % ethtool.get_hwaddr(device)
+ 	else:

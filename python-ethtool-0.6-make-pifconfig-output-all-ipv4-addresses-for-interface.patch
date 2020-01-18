@@ -1,0 +1,43 @@
+--- python-ethtool-0.6/pifconfig.py.orig	2013-08-07 17:11:51.483883885 +0200
++++ python-ethtool-0.6/pifconfig.py	2013-08-07 17:20:31.004075388 +0200
+@@ -14,7 +14,7 @@
+ #   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ #   General Public License for more details.
+ 
+-import getopt, ethtool, sys
++import getopt, ethtool, socket, struct, sys
+ from optparse import OptionParser
+ 
+ def flags2str(flags):
+@@ -54,18 +54,23 @@
+ 
+ 	return string.strip()
+ 
++def bits2netmask(bits):
++	mask = (1<<32) - (1<<32>>bits)
++	return socket.inet_ntoa(struct.pack(">L", mask))
++
+ def show_config(device):
+-	ipaddr = ethtool.get_ipaddr(device)
+-	netmask = ethtool.get_netmask(device)
++	info = ethtool.get_interfaces_info(device)[0]
+ 	flags = ethtool.get_flags(device)
+ 	print '%-9.9s' % device,
+ 	if not (flags & ethtool.IFF_LOOPBACK):
+-		print "HWaddr %s" % ethtool.get_hwaddr(device),
+-	print '''
+-          inet addr:%s''' % ipaddr,
+-	if not (flags & (ethtool.IFF_LOOPBACK | ethtool.IFF_POINTOPOINT)):
+-		print "Bcast:%s" % ethtool.get_broadcast(device),
+-	print '  Mask:%s' % netmask
++		print "HWaddr %s" % ethtool.get_hwaddr(device)
++	else:
++		print
++	for addr in info.get_ipv4_addresses():
++		print '          inet addr:%s' % addr.address,
++		if not (flags & (ethtool.IFF_LOOPBACK | ethtool.IFF_POINTOPOINT)):
++			print "Bcast:%s" % ethtool.get_broadcast(device),
++		print '  Mask:%s' % bits2netmask(addr.netmask)
+ 	for info in ethtool.get_interfaces_info(device):
+ 		for addr in info.get_ipv6_addresses():
+ 			print ("	  inet6 addr: %s/%s Scope: %s"
