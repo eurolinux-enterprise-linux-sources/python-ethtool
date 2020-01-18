@@ -1,0 +1,48 @@
+--- a/python-ethtool/etherinfo.c.orig	2014-01-13 13:38:58.716919961 +0100
++++ b/python-ethtool/etherinfo.c	2014-01-13 13:52:15.838033480 +0100
+@@ -327,6 +327,9 @@
+ 	 */
+ 	if( ethinf->index < 0 ) {
+ 		link_cache = rtnl_link_alloc_cache(*data->nlc);
++        if( link_cache == NULL ) {
++            return 0;
++        }
+ 		ethinf->index = rtnl_link_name2i(link_cache, ethinf->device);
+ 		if( ethinf->index < 0 ) {
+ 			return 0;
+@@ -339,6 +342,9 @@
+ 	case NLQRY_LINK:
+ 		/* Extract MAC/hardware address of the interface */
+ 		link_cache = rtnl_link_alloc_cache(*data->nlc);
++        if( link_cache == NULL ) {
++            return 0;
++        }
+ 		link = rtnl_link_alloc();
+ 		rtnl_link_set_ifindex(link, ethinf->index);
+ 		nl_cache_foreach_filter(link_cache, (struct nl_object *)link, callback_nl_link, ethinf);
+@@ -350,7 +356,14 @@
+ 	case NLQRY_ADDR:
+ 		/* Extract IP address information */
+ 		addr_cache = rtnl_addr_alloc_cache(*data->nlc);
++        if( addr_cache == NULL ) {
++            return 0;
++        }
+ 		addr = rtnl_addr_alloc();
++        if( addr == NULL ) {
++            nl_cache_free(addr_cache);
++            return 0;
++        }
+ 		rtnl_addr_set_ifindex(addr, ethinf->index);
+ 
+                 /* Make sure we don't have any old IPv6 addresses saved */
+@@ -409,7 +422,9 @@
+ 
+ 	/* No earlier connections exists, establish a new one */
+ 	*data->nlc = nl_handle_alloc();
+-	nl_connect(*data->nlc, NETLINK_ROUTE);
++	if( nl_connect(*data->nlc, NETLINK_ROUTE) != 0 ) {
++        return 0;
++    }
+ 	if( (*data->nlc != NULL) ) {
+ 		/* Force O_CLOEXEC flag on the NETLINK socket */
+ 		if( fcntl(nl_socket_get_fd(*data->nlc), F_SETFD, FD_CLOEXEC) == -1 ) {

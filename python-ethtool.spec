@@ -4,11 +4,13 @@
 Summary: Ethernet settings python bindings
 Name: python-ethtool
 Version: 0.8
-Release: 2%{?dist}
+Release: 5%{?dist}
 URL: http://git.fedorahosted.org/cgit/python-ethtool.git
 Source: https://fedorahosted.org/releases/p/y/python-ethtool/python-ethtool-%{version}.tar.bz2
 Patch0: python-ethtool-0.6-make-pifconfig-output-all-ipv4-addresses-for-interface.patch
 Patch1: python-ethtool-0.6-return-ipv6-only-interface-names.patch
+# Properly check libnl return codes and don't fall with segfault
+Patch2: python-ethtool-0.8-check-libnl-return-codes.patch
 License: GPLv2
 Group: System Environment/Libraries
 BuildRequires: python-devel libnl-devel asciidoc
@@ -26,6 +28,7 @@ PCI locations.
 %setup -q
 %patch0 -p1
 %patch1 -p1
+%patch2 -p1
 
 %build
 %{__python} setup.py build
@@ -56,6 +59,16 @@ rm -rf %{buildroot}
 %endif
 
 %changelog
+* Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 0.8-5
+- Mass rebuild 2014-01-24
+
+* Mon Jan 13 2014 Bohuslav Kabrda <bkabrda@redhat.com> - 0.8-4
+- Properly check libnl return codes, don't segfault.
+Resolves: rhbz#1051392
+
+* Fri Dec 27 2013 Daniel Mach <dmach@redhat.com> - 0.8-3
+- Mass rebuild 2013-12-27
+
 * Thu Nov 07 2013 Bohuslav Kabrda <bkabrda@redhat.com> - 0.8-2
 - Fixed reporting of more IPv4 addresses per interface
 Resolves: rhbz#1027685
